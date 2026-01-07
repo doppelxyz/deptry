@@ -49,7 +49,8 @@ class DependencyGetterBuilder:
                     self.config, self.package_module_name_map, self.optional_dependencies_dev_groups
                 )
 
-            if self._project_uses_uv(pyproject_toml):
+            # Check if this is a UV project OR if we're in a UV workspace
+            if self._project_uses_uv(pyproject_toml) or self._project_is_in_uv_workspace():
                 return UvDependencyGetter(
                     self.config, self.package_module_name_map, self.optional_dependencies_dev_groups
                 )
@@ -116,20 +117,65 @@ class DependencyGetterBuilder:
 
     @staticmethod
     def _project_uses_uv(pyproject_toml: dict[str, Any]) -> bool:
+        """
+        Check if the project uses UV for dependency management.
+
+        UV projects can be detected by:
+        - Having [tool.uv.dev-dependencies]
+        - Having [tool.uv.sources] (workspace packages)
+        - Having [tool.uv.workspace] (workspace root)
+        - Having [tool.uv] section in general
+        """
         try:
-            pyproject_toml["tool"]["uv"]["dev-dependencies"]
-            logging.debug(
-                "pyproject.toml contains a [tool.uv.dev-dependencies] section, so uv is used to specify the project's"
-                " dependencies."
-            )
+            uv_config = pyproject_toml["tool"]["uv"]
+
+            # Check for any UV-specific configuration
+            has_dev_deps = "dev-dependencies" in uv_config
+            has_sources = "sources" in uv_config
+            has_workspace = "workspace" in uv_config
+
+            if has_dev_deps or has_sources or has_workspace:
+                logging.debug(
+                    "pyproject.toml contains [tool.uv] configuration (dev-dependencies=%s, sources=%s, workspace=%s), "
+                    "so uv is used to specify the project's dependencies.",
+                    has_dev_deps,
+                    has_sources,
+                    has_workspace,
+                )
+                return True
         except KeyError:
-            logging.debug(
-                "pyproject.toml does not contain a [tool.uv.dev-dependencies] section, so uv is not used to specify the"
-                " project's dependencies."
-            )
-            return False
-        else:
-            return True
+            pass
+
+        logging.debug(
+            "pyproject.toml does not contain [tool.uv] configuration, so uv is not used to specify the"
+            " project's dependencies."
+        )
+        return False
+
+    def _project_is_in_uv_workspace(self) -> bool:
+        """
+        Check if this project is a member of a UV workspace by looking for a
+        workspace root in parent directories.
+
+        Returns True if a parent directory contains a pyproject.toml with
+        [tool.uv.workspace] section.
+        """
+        current_path = self.config.parent
+        for parent in current_path.parents:
+            parent_pyproject = parent / "pyproject.toml"
+            if parent_pyproject.exists():
+                try:
+                    parent_data = load_pyproject_toml(parent_pyproject)
+                    if "tool" in parent_data and "uv" in parent_data["tool"] and "workspace" in parent_data["tool"]["uv"]:
+                        logging.debug(
+                            "Found UV workspace root at %s, treating this project as a UV workspace member",
+                            parent
+                        )
+                        return True
+                except Exception as e:
+                    logging.debug("Could not read parent pyproject.toml at %s: %s", parent_pyproject, e)
+                    continue
+        return False
 
     @staticmethod
     def _project_uses_pep_621(pyproject_toml: dict[str, Any]) -> bool:

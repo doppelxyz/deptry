@@ -52,8 +52,12 @@ class PEP621DependencyGetter(DependencyGetter):
         dev_dependencies_from_optional, remaining_optional_dependencies = (
             self._split_development_dependencies_from_optional_dependencies(optional_dependencies)
         )
+
+        # Add the module's own package as a dependency (modules can import from themselves)
+        own_package_deps = self._get_own_package_dependencies()
+
         return DependenciesExtract(
-            [*dependencies, *remaining_optional_dependencies],
+            [*dependencies, *remaining_optional_dependencies, *own_package_deps],
             self._get_dev_dependencies(dependency_groups_dependencies, dev_dependencies_from_optional),
         )
 
@@ -181,3 +185,39 @@ class PEP621DependencyGetter(DependencyGetter):
                 extracted_dependencies.append(extracted_dependency)
 
         return extracted_dependencies
+
+    def _get_own_package_dependencies(self) -> list[Dependency]:
+        """
+        Get the module's own package as a dependency.
+
+        Modules often import from themselves (e.g., a module named 'my_service' will have
+        'from my_service import ...' in its code). This creates a dependency for the
+        module's own package name so it's not flagged as missing.
+
+        Returns a list containing a single Dependency for the module's own package, or an
+        empty list if the package name cannot be determined.
+        """
+        pyproject_data = load_pyproject_toml(self.config)
+        own_package_name = pyproject_data.get("project", {}).get("name")
+
+        if not own_package_name:
+            return []
+
+        # Import Dependency here to avoid circular imports
+        from deptry.dependency import Dependency
+
+        # Create module names with both hyphenated and underscored variants
+        module_names = [
+            own_package_name,
+            own_package_name.replace("-", "_"),
+            own_package_name.replace("_", "-"),
+        ]
+
+        own_package_dep = Dependency(
+            name=own_package_name,
+            definition_file=self.config,
+            module_names=list(set(module_names)),  # Remove duplicates
+        )
+
+        logging.debug(f"Added module's own package as dependency: {own_package_name} with modules {module_names}")
+        return [own_package_dep]
