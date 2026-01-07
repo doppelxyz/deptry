@@ -30,10 +30,6 @@ jobs:
           - os: macos-15
             target: aarch64
             platform: macos
-          # Windows x64 - common for developers
-          - os: windows-2025
-            target: x64
-            platform: windows
 
     steps:
       - name: Check out
@@ -54,8 +50,8 @@ jobs:
           args: --release --out dist --interpreter python${{ env.PYTHON_VERSION }}
           sccache: 'true'
 
-      - name: Build wheels (macOS/Windows)
-        if: matrix.platform != 'linux'
+      - name: Build wheels (macOS)
+        if: matrix.platform == 'macos'
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
@@ -91,34 +87,45 @@ jobs:
         id: commit
         run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
-      - name: Create/Update Release
+      - name: Generate simple package index
+        run: |
+          cd wheels
+          cat > index.html << 'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head><title>deptry wheels</title></head>
+          <body>
+            <h1>Links for deptry</h1>
+          EOF
+          for wheel in *.whl; do
+            echo "    <a href=\"$wheel\">$wheel</a><br/>" >> index.html
+          done
+          echo "  </body></html>" >> index.html
+          cat index.html
+
+      - name: Create/Update "latest" Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: uv-workspace-support-${{ steps.commit.outputs.sha_short }}
-          name: UV Workspace Support Build (${{ steps.commit.outputs.sha_short }})
+          tag_name: uv-workspace-support-latest
+          name: UV Workspace Support (Latest)
           body: |
-            Pre-built wheels for the `uv-workspace-support` branch.
+            **Latest pre-built wheels** for the `uv-workspace-support` branch.
 
-            **Commit:** ${{ github.sha }}
+            This release is automatically updated with the latest wheels from the branch.
+
+            **Latest commit:** ${{ github.sha }}
             **Built on:** ${{ github.run_id }}
 
-            ## Installation
+            ## Usage
 
-            To use these wheels in your project:
-
-            ```toml
-            # In pyproject.toml
-            dependencies = [
-                "deptry @ https://github.com/doppelxyz/deptry/releases/download/uv-workspace-support-${{ steps.commit.outputs.sha_short }}/deptry-0.0.1-cp311-cp311-manylinux_2_34_x86_64.whl",
-            ]
-            ```
-
-            Or install directly with uv:
-
-            ```bash
-            uv pip install https://github.com/doppelxyz/deptry/releases/download/uv-workspace-support-${{ steps.commit.outputs.sha_short }}/deptry-0.0.1-cp311-cp311-manylinux_2_34_x86_64.whl
-            ```
-          files: wheels/*.whl
+            UV will automatically select the correct wheel for your platform.
+            Wheels are available for:
+            - Linux x86_64
+            - macOS x86_64 (Intel)
+            - macOS aarch64 (Apple Silicon)
+          files: |
+            wheels/*.whl
+            wheels/index.html
           draft: false
           prerelease: true
           generate_release_notes: false
