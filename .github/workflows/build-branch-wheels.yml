@@ -1,0 +1,124 @@
+name: Build Branch Wheels
+
+on:
+  push:
+    branches:
+      - uv-workspace-support
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: '3.11'
+
+permissions:
+  contents: write
+
+jobs:
+  build-wheels:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          # Linux x86_64 - most common for CI
+          - os: ubuntu-24.04
+            target: x86_64
+            platform: linux
+            manylinux: auto
+          # macOS x86_64 and aarch64 (M1/M2)
+          - os: macos-15
+            target: x86_64
+            platform: macos
+          - os: macos-15
+            target: aarch64
+            platform: macos
+          # Windows x64 - common for developers
+          - os: windows-2025
+            target: x64
+            platform: windows
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v6
+
+      - name: Install Python
+        uses: actions/setup-python@v6
+        id: setup-python
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Build wheels (Linux)
+        if: matrix.platform == 'linux'
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          args: --release --out dist --interpreter python${{ env.PYTHON_VERSION }}
+          sccache: 'true'
+
+      - name: Build wheels (macOS/Windows)
+        if: matrix.platform != 'linux'
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --interpreter ${{ steps.setup-python.outputs.python-path }}
+          sccache: 'true'
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.platform }}-${{ matrix.target }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-24.04
+    needs: [build-wheels]
+    steps:
+      - name: Check out
+        uses: actions/checkout@v6
+
+      - name: Download all wheels
+        uses: actions/download-artifact@v4
+        with:
+          path: wheels
+          pattern: wheels-*
+          merge-multiple: true
+
+      - name: List wheels
+        run: ls -lah wheels/
+
+      - name: Get commit hash
+        id: commit
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Create/Update Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: uv-workspace-support-${{ steps.commit.outputs.sha_short }}
+          name: UV Workspace Support Build (${{ steps.commit.outputs.sha_short }})
+          body: |
+            Pre-built wheels for the `uv-workspace-support` branch.
+
+            **Commit:** ${{ github.sha }}
+            **Built on:** ${{ github.run_id }}
+
+            ## Installation
+
+            To use these wheels in your project:
+
+            ```toml
+            # In pyproject.toml
+            dependencies = [
+                "deptry @ https://github.com/doppelxyz/deptry/releases/download/uv-workspace-support-${{ steps.commit.outputs.sha_short }}/deptry-0.0.1-cp311-cp311-manylinux_2_34_x86_64.whl",
+            ]
+            ```
+
+            Or install directly with uv:
+
+            ```bash
+            uv pip install https://github.com/doppelxyz/deptry/releases/download/uv-workspace-support-${{ steps.commit.outputs.sha_short }}/deptry-0.0.1-cp311-cp311-manylinux_2_34_x86_64.whl
+            ```
+          files: wheels/*.whl
+          draft: false
+          prerelease: true
+          generate_release_notes: false
