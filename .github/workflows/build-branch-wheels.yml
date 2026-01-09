@@ -111,45 +111,48 @@ jobs:
       - name: List wheels
         run: ls -lah wheels/
 
-      - name: Generate simple package index
+      - name: Generate package index
         run: |
-          # Create PyPI simple index structure
-          mkdir -p wheels/simple/deptry
+          # Create index directory structure
+          mkdir -p index/deptry
 
-          # Generate root index (lists all packages)
-          cat > wheels/simple/index.html << 'EOF'
+          # Generate root index
+          cat > index/index.html << 'EOF'
           <!DOCTYPE html>
           <html>
-          <head>
-              <title>Simple index</title>
-          </head>
+          <head><title>Simple Index</title></head>
           <body>
               <a href="deptry/">deptry</a><br/>
           </body>
           </html>
           EOF
 
-          # Generate package-specific index (lists all wheels for deptry)
-          cd wheels
-          cat > simple/deptry/index.html << 'EOF'
+          # Generate package index with links to release wheels
+          TAG="${{ steps.version.outputs.tag }}"
+          cat > index/deptry/index.html << 'EOF'
           <!DOCTYPE html>
           <html>
-          <head>
-              <title>Links for deptry</title>
-          </head>
+          <head><title>Links for deptry</title></head>
           <body>
               <h1>Links for deptry</h1>
           EOF
-          for wheel in *.whl; do
-            echo "    <a href=\"../../$wheel\">$wheel</a><br/>" >> simple/deptry/index.html
+          for wheel in wheels/*.whl; do
+            wheel_name=$(basename "$wheel")
+            echo "    <a href=\"https://github.com/doppelxyz/deptry/releases/download/${TAG}/${wheel_name}\">${wheel_name}</a><br/>" >> index/deptry/index.html
           done
-          echo "  </body></html>" >> simple/deptry/index.html
+          echo "  </body></html>" >> index/deptry/index.html
 
-          echo "=== Root index ==="
-          cat simple/index.html
-          echo ""
-          echo "=== Package index ==="
-          cat simple/deptry/index.html
+          cat index/index.html
+          echo "---"
+          cat index/deptry/index.html
+
+      - name: Commit index to repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add index/
+          git commit -m "Update package index for ${{ steps.version.outputs.tag }}" || echo "No changes to commit"
+          git push origin HEAD:main
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
@@ -181,10 +184,7 @@ jobs:
             - Linux x86_64
             - macOS x86_64 (Intel)
             - macOS aarch64 (Apple Silicon)
-          files: |
-            wheels/*.whl
-            wheels/simple/index.html
-            wheels/simple/deptry/index.html
+          files: wheels/*.whl
           draft: false
           prerelease: true
           generate_release_notes: false

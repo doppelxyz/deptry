@@ -14,12 +14,18 @@ This fork uses dynamic versioning based on git tags. The version is **automatica
    - Extract version from tag (e.g., `v0.24.0` → `0.24.0+doppel`)
    - Update `pyproject.toml` with the versioned build
    - Build wheels for Linux x86_64, macOS x86_64, and macOS ARM64
-   - Create PyPI simple index structure
    - Create a GitHub release with all wheels
+   - Update `index/deptry/index.html` with links to the new wheels
+   - Commit the updated index to the main branch
 
 3. **The release will be available at**:
    ```
    https://github.com/doppelxyz/deptry/releases/download/v0.24.0/
+   ```
+
+4. **The package index is hosted at**:
+   ```
+   https://raw.githubusercontent.com/doppelxyz/deptry/main/index/
    ```
 
 ## Usage in Other Projects
@@ -33,12 +39,14 @@ dependencies = [
 
 [[tool.uv.index]]
 name = "doppel-deptry"
-url = "https://github.com/doppelxyz/deptry/releases/download/v0.24.0/simple/"
+url = "https://raw.githubusercontent.com/doppelxyz/deptry/main/index/"
 explicit = true
 
 [tool.uv.sources]
 deptry = { index = "doppel-deptry" }
 ```
+
+The index is automatically updated when new releases are created.
 
 ## Version Format
 
