@@ -1,9 +1,9 @@
-name: Build Branch Wheels
+name: Build and Release Wheels
 
 on:
   push:
-    branches:
-      - uv-workspace-support
+    tags:
+      - 'v*.*.*'
   workflow_dispatch:
 
 env:
@@ -34,6 +34,24 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@v6
+
+      - name: Get version from tag
+        id: version
+        run: |
+          if [ "${{ github.ref_type }}" != "tag" ]; then
+            echo "ERROR: This workflow must be triggered by a tag (e.g., v0.24.0)"
+            exit 1
+          fi
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          echo "version=${VERSION}+doppel" >> $GITHUB_OUTPUT
+          echo "Building version: ${VERSION}+doppel"
+
+      - name: Update version in pyproject.toml
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          sed -i.bak "s/^version = .*/version = \"${VERSION}\"/" pyproject.toml
+          echo "Updated version to: ${VERSION}"
+          grep "^version = " pyproject.toml
 
       - name: Install Python
         uses: actions/setup-python@v6
@@ -73,6 +91,16 @@ jobs:
       - name: Check out
         uses: actions/checkout@v6
 
+      - name: Get version from tag
+        id: version
+        run: |
+          if [ "${{ github.ref_type }}" != "tag" ]; then
+            echo "ERROR: This workflow must be triggered by a tag (e.g., v0.24.0)"
+            exit 1
+          fi
+          echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          echo "version=${GITHUB_REF#refs/tags/v}+doppel" >> $GITHUB_OUTPUT
+
       - name: Download all wheels
         uses: actions/download-artifact@v4
         with:
@@ -83,49 +111,80 @@ jobs:
       - name: List wheels
         run: ls -lah wheels/
 
-      - name: Get commit hash
-        id: commit
-        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-
       - name: Generate simple package index
         run: |
-          cd wheels
-          cat > index.html << 'EOF'
+          # Create PyPI simple index structure
+          mkdir -p wheels/simple/deptry
+
+          # Generate root index (lists all packages)
+          cat > wheels/simple/index.html << 'EOF'
           <!DOCTYPE html>
           <html>
-          <head><title>deptry wheels</title></head>
+          <head>
+              <title>Simple index</title>
+          </head>
           <body>
-            <h1>Links for deptry</h1>
+              <a href="deptry/">deptry</a><br/>
+          </body>
+          </html>
+          EOF
+
+          # Generate package-specific index (lists all wheels for deptry)
+          cd wheels
+          cat > simple/deptry/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>Links for deptry</title>
+          </head>
+          <body>
+              <h1>Links for deptry</h1>
           EOF
           for wheel in *.whl; do
-            echo "    <a href=\"$wheel\">$wheel</a><br/>" >> index.html
+            echo "    <a href=\"../../$wheel\">$wheel</a><br/>" >> simple/deptry/index.html
           done
-          echo "  </body></html>" >> index.html
-          cat index.html
+          echo "  </body></html>" >> simple/deptry/index.html
 
-      - name: Create/Update "latest" Release
+          echo "=== Root index ==="
+          cat simple/index.html
+          echo ""
+          echo "=== Package index ==="
+          cat simple/deptry/index.html
+
+      - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: uv-workspace-support-latest
-          name: UV Workspace Support (Latest)
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Deptry ${{ steps.version.outputs.version }} (Doppel Fork)
           body: |
-            **Latest pre-built wheels** for the `uv-workspace-support` branch.
+            **Pre-built wheels** for deptry ${{ steps.version.outputs.version }} (Doppel fork with UV workspace support).
 
-            This release is automatically updated with the latest wheels from the branch.
-
-            **Latest commit:** ${{ github.sha }}
+            **Commit:** ${{ github.sha }}
             **Built on:** ${{ github.run_id }}
 
-            ## Usage
+            ## Installation
 
-            UV will automatically select the correct wheel for your platform.
-            Wheels are available for:
+            Add to your `pyproject.toml`:
+            ```toml
+            [[tool.uv.index]]
+            name = "doppel-deptry"
+            url = "https://github.com/doppelxyz/deptry/releases/download/${{ steps.version.outputs.tag }}/simple/"
+            explicit = true
+
+            [tool.uv.sources]
+            deptry = { index = "doppel-deptry" }
+            ```
+
+            ## Wheels Available
+
+            UV will automatically select the correct wheel for your platform:
             - Linux x86_64
             - macOS x86_64 (Intel)
             - macOS aarch64 (Apple Silicon)
           files: |
             wheels/*.whl
-            wheels/index.html
+            wheels/simple/index.html
+            wheels/simple/deptry/index.html
           draft: false
           prerelease: true
           generate_release_notes: false
