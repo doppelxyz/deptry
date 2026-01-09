@@ -53,14 +53,41 @@ class UvDependencyGetter(PEP621DependencyGetter):
 
         return [*dev_dependencies, *self._extract_pep_508_dependencies(dev_dependency_strings)]
 
-    def _get_workspace_packages(self) -> set[str]:
+    def _get_workspace_packages(self) -> dict[str, list[str]]:
         """
         Extract workspace packages from [tool.uv.sources] and [tool.uv.workspace].
 
-        Returns a set of package names that are workspace members, which should be
-        treated as known first-party imports.
+        Returns a dict mapping package names to their module names. Module names are extracted from:
+        1. package_module_name_map (if provided)
+        2. [tool.hatch.build.targets.wheel] packages field (extracting the last part of paths)
+        3. Fallback: package name with hyphens replaced by underscores
         """
-        workspace_packages: set[str] = set()
+        workspace_packages: dict[str, list[str]] = {}
+
+        def _extract_module_names_from_pyproject(member_pyproject_path: Path, package_name: str) -> list[str]:
+            """Extract module names for a workspace package from its pyproject.toml."""
+            # First, check if the package is in package_module_name_map
+            if package_name in self.package_module_name_map:
+                module_names = list(self.package_module_name_map[package_name])
+                logging.debug(f"Using package_module_name_map for {package_name}: {module_names}")
+                return module_names
+
+            # Try to extract from [tool.hatch.build.targets.wheel] packages
+            try:
+                member_data = load_pyproject_toml(member_pyproject_path)
+                packages = member_data.get("tool", {}).get("hatch", {}).get("build", {}).get("targets", {}).get("wheel", {}).get("packages", [])
+                if packages:
+                    # Extract the last part of each package path (e.g., "src/scan_api" -> "scan_api")
+                    module_names = [Path(pkg).name for pkg in packages]
+                    logging.debug(f"Extracted module names from [tool.hatch.build.targets.wheel] for {package_name}: {module_names}")
+                    return module_names
+            except Exception as e:
+                logging.debug(f"Could not extract module names from {member_pyproject_path}: {e}")
+
+            # Fallback: use package name with variations
+            fallback_module = package_name.replace("-", "_")
+            logging.debug(f"Using fallback module name for {package_name}: {fallback_module}")
+            return [fallback_module]
 
         pyproject_data = load_pyproject_toml(self.config)
 
@@ -69,8 +96,15 @@ class UvDependencyGetter(PEP621DependencyGetter):
             sources = pyproject_data["tool"]["uv"]["sources"]
             for package_name, source_config in sources.items():
                 if isinstance(source_config, dict) and source_config.get("workspace") is True:
-                    workspace_packages.add(package_name)
-                    logging.debug(f"Found workspace package in [tool.uv.sources]: {package_name}")
+                    # For workspace sources, we need to find the actual pyproject.toml
+                    # The workspace source might have a path, or we need to look it up
+                    workspace_path = source_config.get("path")
+                    if workspace_path:
+                        member_pyproject_path = self.config.parent / workspace_path / "pyproject.toml"
+                        if member_pyproject_path.exists():
+                            module_names = _extract_module_names_from_pyproject(member_pyproject_path, package_name)
+                            workspace_packages[package_name] = module_names
+                            logging.debug(f"Found workspace package in [tool.uv.sources]: {package_name} with modules {module_names}")
         except KeyError:
             logging.debug("No [tool.uv.sources] section found in pyproject.toml")
 
@@ -88,14 +122,11 @@ class UvDependencyGetter(PEP621DependencyGetter):
                         member_data = load_pyproject_toml(member_pyproject_path)
                         package_name = member_data.get("project", {}).get("name")
                         if package_name:
-                            workspace_packages.add(package_name)
-                            logging.debug(f"Found workspace member package: {package_name} from {member_path}")
+                            module_names = _extract_module_names_from_pyproject(member_pyproject_path, package_name)
+                            workspace_packages[package_name] = module_names
+                            logging.debug(f"Found workspace member package: {package_name} from {member_path} with modules {module_names}")
                     except Exception as e:
                         logging.debug(f"Could not read package name from {member_pyproject_path}: {e}")
-                        # Fallback: use the last part of the path as package name
-                        fallback_name = Path(member_path).name.replace("_", "-")
-                        workspace_packages.add(fallback_name)
-                        logging.debug(f"Using fallback package name: {fallback_name}")
         except KeyError:
             logging.debug("No [tool.uv.workspace] section found in pyproject.toml")
 
@@ -116,9 +147,10 @@ class UvDependencyGetter(PEP621DependencyGetter):
                             try:
                                 member_data = load_pyproject_toml(member_pyproject_path)
                                 package_name = member_data.get("project", {}).get("name")
-                                if package_name:
-                                    workspace_packages.add(package_name)
-                                    logging.debug(f"Found workspace package from parent: {package_name}")
+                                if package_name and package_name not in workspace_packages:
+                                    module_names = _extract_module_names_from_pyproject(member_pyproject_path, package_name)
+                                    workspace_packages[package_name] = module_names
+                                    logging.debug(f"Found workspace package from parent: {package_name} with modules {module_names}")
                             except Exception:
                                 pass
                     break  # Found workspace root, stop searching
@@ -126,7 +158,7 @@ class UvDependencyGetter(PEP621DependencyGetter):
                     continue  # Not a workspace root, keep searching
 
         if workspace_packages:
-            logging.info(f"Detected {len(workspace_packages)} UV workspace packages: {', '.join(sorted(workspace_packages))}")
+            logging.info(f"Detected {len(workspace_packages)} UV workspace packages: {', '.join(sorted(workspace_packages.keys()))}")
 
         return workspace_packages
 
@@ -157,14 +189,15 @@ class UvDependencyGetter(PEP621DependencyGetter):
 
             logging.debug(f"Checking dependency '{dep.name}' (normalized: '{dep_normalized}')")
 
-            for ws_pkg in workspace_packages:
+            for ws_pkg, ws_module_names in workspace_packages.items():
                 ws_pkg_normalized = ws_pkg.replace("-", "_").lower()
                 if dep_normalized == ws_pkg_normalized:
                     is_workspace = True
                     logging.debug(f"  -> Matched with workspace package '{ws_pkg}'")
-                    # Recreate the dependency with both hyphenated and underscored module names
-                    # This ensures deptry can match imports like "hasura_auth" or "hasura-auth"
+                    # Use the extracted module names from the workspace package
+                    # Also include common variations to ensure matching works
                     module_names = [
+                        *ws_module_names,  # Module names from pyproject.toml or package_module_name_map
                         ws_pkg,  # Original workspace name
                         ws_pkg.replace("-", "_"),  # Underscored version
                         ws_pkg.replace("_", "-"),  # Hyphenated version
