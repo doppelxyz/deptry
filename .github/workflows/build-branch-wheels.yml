@@ -113,11 +113,11 @@ jobs:
 
       - name: Generate package index
         run: |
-          # Create index directory structure
-          mkdir -p index/deptry
+          # Create PyPI index directory structure in docs/pypi
+          mkdir -p docs/pypi/deptry
 
           # Generate root index
-          cat > index/index.html << 'EOF'
+          cat > docs/pypi/index.html << 'EOF'
           <!DOCTYPE html>
           <html>
           <head><title>Simple Index</title></head>
@@ -129,7 +129,7 @@ jobs:
 
           # Generate package index with links to release wheels
           TAG="${{ steps.version.outputs.tag }}"
-          cat > index/deptry/index.html << 'EOF'
+          cat > docs/pypi/deptry/index.html << 'EOF'
           <!DOCTYPE html>
           <html>
           <head><title>Links for deptry</title></head>
@@ -138,13 +138,13 @@ jobs:
           EOF
           for wheel in wheels/*.whl; do
             wheel_name=$(basename "$wheel")
-            echo "    <a href=\"https://github.com/doppelxyz/deptry/releases/download/${TAG}/${wheel_name}\">${wheel_name}</a><br/>" >> index/deptry/index.html
+            echo "    <a href=\"https://github.com/doppelxyz/deptry/releases/download/${TAG}/${wheel_name}\">${wheel_name}</a><br/>" >> docs/pypi/deptry/index.html
           done
-          echo "  </body></html>" >> index/deptry/index.html
+          echo "  </body></html>" >> docs/pypi/deptry/index.html
 
-          cat index/index.html
+          cat docs/pypi/index.html
           echo "---"
-          cat index/deptry/index.html
+          cat docs/pypi/deptry/index.html
 
       - name: Commit index to repository
         run: |
@@ -161,7 +161,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           # Add and commit changes
-          git add index/
+          git add docs/pypi/
           git commit -m "Update package index for ${{ steps.version.outputs.tag }}" || echo "No changes to commit"
 
           # Push back to the same branch
