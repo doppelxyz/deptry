@@ -194,6 +194,11 @@ class PEP621DependencyGetter(DependencyGetter):
         'from my_service import ...' in its code). This creates a dependency for the
         module's own package name so it's not flagged as missing.
 
+        Module names are extracted from:
+        1. package_module_name_map configuration (if provided)
+        2. [tool.hatch.build.targets.wheel] packages field
+        3. Fallback to package name with hyphens/underscores variants
+
         Returns a list containing a single Dependency for the module's own package, or an
         empty list if the package name cannot be determined.
         """
@@ -206,12 +211,59 @@ class PEP621DependencyGetter(DependencyGetter):
         # Import Dependency here to avoid circular imports
         from deptry.dependency import Dependency
 
-        # Create module names with both hyphenated and underscored variants
-        module_names = [
-            own_package_name,
-            own_package_name.replace("-", "_"),
-            own_package_name.replace("_", "-"),
-        ]
+        module_names = []
+
+        # 1. Check package_module_name_map first
+        if own_package_name in self.package_module_name_map:
+            mapped_modules = self.package_module_name_map[own_package_name]
+            if isinstance(mapped_modules, str):
+                module_names.append(mapped_modules)
+            else:
+                module_names.extend(mapped_modules)
+            logging.debug(f"Using package_module_name_map for own package {own_package_name}: {module_names}")
+
+        # 2. Try to extract from [tool.hatch.build.targets.wheel] packages
+        if not module_names:
+            try:
+                packages = (
+                    pyproject_data.get("tool", {})
+                    .get("hatch", {})
+                    .get("build", {})
+                    .get("targets", {})
+                    .get("wheel", {})
+                    .get("packages", [])
+                )
+                if packages:
+                    # Extract the last part of each package path (e.g., "src/my_module" -> "my_module")
+                    from pathlib import Path
+
+                    for pkg in packages:
+                        module_name = Path(pkg).name
+                        if module_name and module_name != ".":
+                            module_names.append(module_name)
+                    logging.debug(
+                        f"Extracted module names from [tool.hatch.build.targets.wheel] for own package {own_package_name}: {module_names}"
+                    )
+            except Exception as e:
+                logging.debug(f"Could not extract module names from {self.config}: {e}")
+
+        # 3. Fallback: use package name with variations
+        if not module_names:
+            module_names = [
+                own_package_name,
+                own_package_name.replace("-", "_"),
+                own_package_name.replace("_", "-"),
+            ]
+            logging.debug(f"Using fallback module names for own package {own_package_name}: {module_names}")
+        else:
+            # Add common variations to ensure matching works
+            module_names.extend(
+                [
+                    own_package_name,
+                    own_package_name.replace("-", "_"),
+                    own_package_name.replace("_", "-"),
+                ]
+            )
 
         own_package_dep = Dependency(
             name=own_package_name,
