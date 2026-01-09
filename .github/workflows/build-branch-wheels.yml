@@ -148,11 +148,24 @@ jobs:
 
       - name: Commit index to repository
         run: |
+          # Find which branch contains this tag
+          BRANCH=$(git branch -r --contains ${{ github.sha }} | grep -v HEAD | head -1 | sed 's/.*origin\///')
+          echo "Tag is on branch: ${BRANCH}"
+
+          # Check out the branch
+          git fetch origin ${BRANCH}
+          git checkout ${BRANCH}
+
+          # Configure git
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Add and commit changes
           git add index/
           git commit -m "Update package index for ${{ steps.version.outputs.tag }}" || echo "No changes to commit"
-          git push origin HEAD:main
+
+          # Push back to the same branch
+          git push origin ${BRANCH}
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
