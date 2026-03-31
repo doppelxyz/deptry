@@ -38,6 +38,20 @@ poetry add --group dev deptry
 pip install deptry
 ```
 
+If you want to install _deptry_ outside of a Python environment manager, download the platform-specific standalone binary
+from [GitHub Releases](https://github.com/doppelxyz/deptry/releases) and add it to your `PATH`. For example, with
+`direnv`:
+
+```shell
+mkdir -p .tools/deptry
+curl -LsSf "<release asset url>" | tar -xz -C .tools/deptry --strip-components=1
+```
+
+```shell
+# .envrc
+PATH_add .tools/deptry
+```
+
 > **Warning**: When using pip to install _deptry_, make sure you install it within the virtual environment of your project. Installing _deptry_ globally will not work, since it needs to have access to the metadata of the packages in the virtual environment.
 
 ### Prerequisites

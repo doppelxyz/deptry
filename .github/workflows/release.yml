@@ -4,9 +4,20 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      artifact_type:
+        description: Artifact type to build
+        required: true
+        default: standalone
+        type: choice
+        options:
+          - standalone
+          - wheel
+          - both
 
 env:
   PYTHON_VERSION: '3.14'
+  STANDALONE_PYTHON_VERSION: '3.13'
   # renovate: datasource=pypi depName=uv
   UV_VERSION: '0.9.21'
 
@@ -34,6 +45,7 @@ jobs:
           path: pyproject.toml
 
   linux:
+    if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.artifact_type == 'wheel' || github.event.inputs.artifact_type == 'both') }}
     runs-on: ubuntu-24.04
     needs: [set-version]
     strategy:
@@ -72,6 +84,7 @@ jobs:
           path: dist
 
   windows:
+    if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.artifact_type == 'wheel' || github.event.inputs.artifact_type == 'both') }}
     runs-on: windows-2025
     needs: [set-version]
     strategy:
@@ -115,6 +128,7 @@ jobs:
           path: dist
 
   macos:
+    if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.artifact_type == 'wheel' || github.event.inputs.artifact_type == 'both') }}
     runs-on: macos-15
     needs: [set-version]
     strategy:
@@ -152,6 +166,7 @@ jobs:
           path: dist
 
   sdist:
+    if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.artifact_type == 'wheel' || github.event.inputs.artifact_type == 'both') }}
     runs-on: ubuntu-24.04
     needs: [set-version]
     steps:
@@ -183,6 +198,7 @@ jobs:
 
   publish:
     name: Publish
+    if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.artifact_type == 'wheel' || github.event.inputs.artifact_type == 'both') }}
     runs-on: ubuntu-24.04
     needs:
       - linux
@@ -197,25 +213,126 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Publish to PyPI
-        if: ${{ github.event_name == 'release' }}
-        uses: PyO3/maturin-action@86b9d133d34bc1b40018696f782949dac11bd380 # v1.49.4
-        env:
-          MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
-        with:
-          command: upload
-          args: --non-interactive --skip-existing wheels-*/*
-
       - name: '[dry-run] Publish to PyPI'
-        if: ${{ github.event_name != 'release' }}
         uses: PyO3/maturin-action@86b9d133d34bc1b40018696f782949dac11bd380 # v1.49.4
         with:
           command: upload
           args: --help
 
+  standalone-binaries:
+    if: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && (github.event.inputs.artifact_type == 'standalone' || github.event.inputs.artifact_type == 'both')) }}
+    needs: [set-version]
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            is_linux: false
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            is_linux: true
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            is_linux: true
+    name: standalone (${{ matrix.target }})
+    steps:
+      - name: Check out
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download updated pyproject.toml
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: pyproject-toml
+
+      - name: Install Python
+        uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
+        id: setup-python
+        with:
+          python-version: ${{ env.STANDALONE_PYTHON_VERSION }}
+
+      - name: Build wheel
+        if: ${{ !matrix.is_linux }}
+        uses: PyO3/maturin-action@86b9d133d34bc1b40018696f782949dac11bd380 # v1.49.4
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --interpreter ${{ steps.setup-python.outputs.python-path }}
+          sccache: 'true'
+
+      - name: Build manylinux wheel
+        if: ${{ matrix.is_linux }}
+        uses: PyO3/maturin-action@86b9d133d34bc1b40018696f782949dac11bd380 # v1.49.4
+        with:
+          target: ${{ matrix.target }}
+          manylinux: auto
+          args: --release --out dist --interpreter python${{ env.STANDALONE_PYTHON_VERSION }}
+          sccache: 'true'
+
+      - name: Install pex
+        run: python -m pip install certifi pex
+
+      - name: Build standalone executable
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          wheel="$(echo dist/deptry-*.whl)"
+          export SSL_CERT_FILE="$(python -c 'import certifi; print(certifi.where())')"
+
+          pex "$wheel" \
+            --python "${{ steps.setup-python.outputs.python-path }}" \
+            --venv \
+            --scie eager \
+            --scie-pbs-stripped \
+            -c deptry \
+            -o dist/deptry
+
+      - name: Package standalone executable
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="${GITHUB_REF_NAME:-dev}"
+          archive_root="deptry-${version}-${{ matrix.target }}"
+
+          mkdir -p "dist/${archive_root}"
+          cp dist/deptry "dist/${archive_root}/deptry"
+          cp LICENSE "dist/${archive_root}/LICENSE"
+
+          tar -C dist -czf "dist/${archive_root}.tar.gz" "${archive_root}"
+          shasum -a 256 "dist/${archive_root}.tar.gz" > "dist/${archive_root}.tar.gz.sha256"
+
+      - name: Upload standalone artifacts
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: standalone-${{ matrix.target }}
+          path: |
+            dist/deptry-${{ github.ref_name || 'dev' }}-${{ matrix.target }}.tar.gz
+            dist/deptry-${{ github.ref_name || 'dev' }}-${{ matrix.target }}.tar.gz.sha256
+
+  publish-standalone:
+    if: ${{ github.event_name == 'release' }}
+    needs: [standalone-binaries]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download standalone artifacts
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+
+      - name: Upload standalone assets to GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.ref_name }}" standalone-*/* --clobber
+
   publish-docs:
     runs-on: ubuntu-24.04
-    needs: publish
+    needs: [set-version]
     permissions:
       contents: write
     steps:
