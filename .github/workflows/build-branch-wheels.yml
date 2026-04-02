@@ -60,7 +60,10 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install safe-chain
-        run: curl -fsSL https://github.com/AikidoSec/safe-chain/releases/latest/download/install-safe-chain.sh | sh -s -- --ci
+        shell: bash
+        run: |
+          curl -fsSL https://github.com/AikidoSec/safe-chain/releases/latest/download/install-safe-chain.sh | sh -s -- --ci
+          echo "$HOME/.safe-chain/shims" >> "$GITHUB_PATH"
 
       - name: Build wheels (Linux)
         if: matrix.platform == 'linux'

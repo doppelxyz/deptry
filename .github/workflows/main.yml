@@ -39,7 +39,10 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install safe-chain
-        run: curl -fsSL https://github.com/AikidoSec/safe-chain/releases/latest/download/install-safe-chain.sh | sh -s -- --ci
+        shell: bash
+        run: |
+          curl -fsSL https://github.com/AikidoSec/safe-chain/releases/latest/download/install-safe-chain.sh | sh -s -- --ci
+          echo "$HOME/.safe-chain/shims" >> "$GITHUB_PATH"
 
       - name: Install Python dependencies
         # We want to install all groups here to make sure that deptry has access to all dependencies for the inspection,
@@ -97,7 +100,10 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install safe-chain
-        run: curl -fsSL https://github.com/AikidoSec/safe-chain/releases/latest/download/install-safe-chain.sh | sh -s -- --ci
+        shell: bash
+        run: |
+          curl -fsSL https://github.com/AikidoSec/safe-chain/releases/latest/download/install-safe-chain.sh | sh -s -- --ci
+          echo "$HOME/.safe-chain/shims" >> "$GITHUB_PATH"
 
       - name: Install Python dependencies
         run: uv sync --frozen --no-default-groups --group test --group typing
@@ -141,7 +147,10 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install safe-chain
-        run: curl -fsSL https://github.com/AikidoSec/safe-chain/releases/latest/download/install-safe-chain.sh | sh -s -- --ci
+        shell: bash
+        run: |
+          curl -fsSL https://github.com/AikidoSec/safe-chain/releases/latest/download/install-safe-chain.sh | sh -s -- --ci
+          echo "$HOME/.safe-chain/shims" >> "$GITHUB_PATH"
         
       - name: Check if documentation can be built
         run: uv run --only-group docs mkdocs build --strict
