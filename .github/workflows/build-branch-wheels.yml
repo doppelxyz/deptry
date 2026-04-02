@@ -59,6 +59,9 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
+      - name: Install safe-chain
+        run: curl -fsSL https://github.com/AikidoSec/safe-chain/releases/latest/download/install-safe-chain.sh | sh -s -- --ci
+
       - name: Build wheels (Linux)
         if: matrix.platform == 'linux'
         uses: PyO3/maturin-action@v1
